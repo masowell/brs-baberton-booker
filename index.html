@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>BRS Baberton Booker</title>
+  <style>
+    body { font-family: -apple-system, sans-serif; margin: 0; padding: 1rem; background: #f8f9fa; }
+    .card { background: white; padding: 1.5rem; border-radius: 12px; margin-bottom: 1rem; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    input, button { padding: 0.8rem; margin: 0.4rem 0; border-radius: 8px; border: 1px solid #ddd; width: 100%; box-sizing: border-box; }
+    button { background: #0066cc; color: white; font-weight: bold; border: none; cursor: pointer; }
+    .player-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+    .player-item { padding: 0.5rem; background: #f1f1f1; border-radius: 6px; text-align: center; }
+    .log { background: #e9ecef; padding: 1rem; border-radius: 8px; font-family: monospace; max-height: 200px; overflow-y: auto; font-size: 0.9rem; }
+    h2 { color: #0066cc; margin-top: 0; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>BRS Baberton Booker</h2>
+    <form id="bookForm">
+      <label>Tee Date (UK)</label>
+      <input type="date" name="tee_date" required value="{{ default_date }}">
+
+      <label>Tee Time</label>
+      <input type="time" name="tee_time" required value="08:06">
+
+      <label>Select 4 Players</label>
+      <div class="player-grid">
+        {% for player in players %}
+          <label class="player-item">
+            <input type="checkbox" name="p{{ loop.index }}" value="{{ player }}">
+            {{ player.split(', ')[1] }}
+          </label>
+        {% endfor %}
+      </div>
+
+      <button type="submit">SCHEDULE BOOKING AT 19:15</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3>Recent Activity</h3>
+    <div class="log">
+      {% for line in log %}
+        <div>{{ line }}</div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <script>
+    document.getElementById('bookForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const res = await fetch('/book', { method: 'POST', body: fd });
+      const data = await res.json();
+      alert(data.status || data.error);
+      location.reload();
+    };
+  </script>
+</body>
+</html>
