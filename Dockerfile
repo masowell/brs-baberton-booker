@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-# Install system deps for Playwright
+# Install ALL required system deps for Playwright Chromium (manual)
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
@@ -16,7 +16,6 @@ RUN apt-get update && apt-get install -y \
     libexpat1 \
     libfontconfig1 \
     libgbm1 \
-    libgcc1 \
     libglib2.0-0 \
     libgtk-3-0 \
     libnspr4 \
@@ -37,24 +36,28 @@ RUN apt-get update && apt-get install -y \
     libxrender1 \
     libxtst6 \
     xdg-utils \
+    libxss1 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy and install Python deps
+# Copy and install Python packages
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright browsers AS ROOT (no sudo/su needed)
-RUN playwright install chromium --with-deps
+# Install Chromium ONLY (no --with-deps → avoids su)
+RUN PLAYWRIGHT_BROWSERS_PATH=/ms-playwright playwright install chromium
 
-# Copy app code
+# Set Playwright path
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+# Copy app
 COPY . .
 
 # Expose port
 EXPOSE 10000
 
-# Run as non-root user (security)
+# Run as non-root
 RUN useradd -m appuser
 USER appuser
 
