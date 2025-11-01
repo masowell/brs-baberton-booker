@@ -1,4 +1,5 @@
 import os
+os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/ms-playwright"
 import asyncio
 from datetime import datetime, timedelta
 from typing import List
@@ -131,4 +132,5 @@ async def book(
         return {"error": "Select at least one player"}
 
     asyncio.create_task(book_tee_time(target_dt, players))
+
     return {"status": "Booking scheduled for 19:15:00 on open day!"}
