@@ -1,0 +1,134 @@
+import os
+import asyncio
+from datetime import datetime, timedelta
+from typing import List
+from zoneinfo import ZoneInfo
+
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
+from playwright.async_api import async_playwright
+
+app = FastAPI()
+app.mount("/static", StaticFiles(directory="static"), name="static")
+templates = Jinja2Templates(directory="templates")
+
+# === YOUR BRS CREDENTIALS (KEEP SECRET!) ===
+USERNAME = "3011"
+PASSWORD = "baberton"
+LOGIN_URL = "https://members.brsgolf.com/baberton/login"
+
+# === YOUR 12 PLAYERS (BRS Format) ===
+PLAYERS = [
+    "Mason, Alan", "Bell, Ian", "Campbell, Colin", "Cowley, David",
+    "Hunter, Kenny", "Irons, Charlie", "Wilson, Alan", "Wood, Kenny",
+    "Livesey, Neil W", "Gunning, Bob", "Ross, Alastair", "Barr, Alex"
+]
+
+# === LOG (Shared across all users) ===
+LOG = []
+
+UK = ZoneInfo("Europe/London")
+
+def get_booking_open_time(tee_date: str, tee_time: str) -> datetime:
+    """8 days before tee time, at 19:15:00 UK"""
+    tee_dt = datetime.strptime(f"{tee_date} {tee_time}", "%Y-%m-%d %H:%M").replace(tzinfo=UK)
+    return (tee_dt - timedelta(days=8)).replace(hour=19, minute=15, second=0, microsecond=0)
+
+async def book_tee_time(target_tee_dt: datetime, selected_players: List[str]) -> str:
+    open_time = get_booking_open_time(
+        target_tee_dt.strftime("%Y-%m-%d"),
+        target_tee_dt.strftime("%H:%M")
+    )
+    now = datetime.now(UK)
+    delay = (open_time - now).total_seconds()
+
+    if delay > 0:
+        LOG.append(f"Scheduled: Will run in {int(delay)}s at 19:15:00")
+        await asyncio.sleep(delay)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        context = await browser.new_context(
+            viewport={"width": 390, "height": 844},
+            user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"
+        )
+        page = await context.new_page()
+
+        try:
+            # 1. Login
+            await page.goto(LOGIN_URL, wait_until="networkidle")
+            await page.fill('input[name="username"]', USERNAME)
+            await page.fill('input[name="password"]', PASSWORD)
+            await page.click('button[type="submit"]')
+            await page.wait_for_url("**/baberton/**", timeout=15000)
+
+            # 2. Go to Tee Sheet
+            await page.click('text="Tee Sheet"')
+            await page.wait_for_selector('text="SAT"')
+
+            # 3. Click target date
+            day_num = target_tee_dt.day
+            await page.click(f'text="{day_num}"')
+            await page.wait_for_selector('text="07:30"')
+
+            # 4. Try booking: 08:06 → 08:15 → 08:24...
+            current = target_tee_dt
+            while current.hour < 22:
+                time_str = current.strftime("%H:%M")
+                plus_btn = page.locator(f'text="{time_str}" ~ "+"').first
+                if await plus_btn.is_visible(timeout=2000):
+                    await plus_btn.click()
+                    await page.wait_for_selector('text="Player 1"')
+
+                    # Fill 4 players (type first name → Enter)
+                    for i, full in enumerate(selected_players[:4], 1):
+                        first = full.split(", ")[1].split()[0]
+                        await page.fill(f'text=Player {i} >> xpath=../input', first)
+                        await page.press(f'text=Player {i} >> xpath=../input', "Enter")
+                        await asyncio.sleep(0.5)
+
+                    await page.click('text="CREATE BOOKING"')
+                    await page.wait_for_selector('text="confirmed"', timeout=10000)
+                    result = f"Booked {time_str} on {target_tee_dt.strftime('%d %b')} for {', '.join(selected_players[:4])}"
+                    LOG.append(f"[{datetime.now(UK).strftime('%H:%M:%S')}] {result}")
+                    return result
+
+                current += timedelta(minutes=9)
+
+            result = "No slots found after 22:00"
+            LOG.append(f"[{datetime.now(UK).strftime('%H:%M:%S')}] {result}")
+            return result
+
+        except Exception as e:
+            error = f"Error: {str(e)[:100]}"
+            LOG.append(f"[{datetime.now(UK).strftime('%H:%M:%S')}] {error}")
+            return error
+        finally:
+            await browser.close()
+
+@app.get("/", response_class=HTMLResponse)
+async def home(request: Request):
+    tomorrow = (datetime.now(UK) + timedelta(days=1)).strftime("%Y-%m-%d")
+    return templates.TemplateResponse("index.html", {
+        "request": request,
+        "players": PLAYERS,
+        "log": LOG[-10:],
+        "default_date": tomorrow
+    })
+
+@app.post("/book")
+async def book(
+    tee_date: str = Form(...),
+    tee_time: str = Form(...),
+    p1: str = Form(""), p2: str = Form(""), p3: str = Form(""), p4: str = Form("")
+):
+    target_str = f"{tee_date} {tee_time}"
+    target_dt = datetime.strptime(target_str, "%Y-%m-%d %H:%M").replace(tzinfo=UK)
+    players = [p for p in [p1, p2, p3, p4] if p]
+    if len(players) == 0:
+        return {"error": "Select at least one player"}
+
+    asyncio.create_task(book_tee_time(target_dt, players))
+    return {"status": "Booking scheduled for 19:15:00 on open day!"}
